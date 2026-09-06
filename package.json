@@ -1,0 +1,59 @@
+{
+  "name": "dsh-probstat",
+  "version": "0.1.0",
+  "description": "Deterministic probability & statistical inference math for DeepSeek Harness (dsh): distribution calculator (normal/binomial/poisson/exponential/uniform/geometric pdf/cdf/survival/quantile/stats), standard-normal z-table math, confidence intervals (mean z/t + Wilson proportion) and event-probability identities (union/intersection/conditional/Bayes) — zero runtime dependencies",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "oxlint src test"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "probability",
+    "statistics",
+    "normal-distribution",
+    "z-score",
+    "confidence-interval",
+    "bayes",
+    "quantile"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TYEclipse/dsh-probstat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TYEclipse/dsh-probstat/issues"
+  },
+  "homepage": "https://github.com/TYEclipse/dsh-probstat#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/node": "^24.13.3",
+    "oxlint": "^1.6.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
