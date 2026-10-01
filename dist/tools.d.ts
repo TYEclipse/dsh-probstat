@@ -10,6 +10,8 @@ export interface ToolSet {
     z_score: ToolDefinition;
     confidence_interval: ToolDefinition;
     event_probability: ToolDefinition;
+    hypothesis_test: ToolDefinition;
+    sample_size: ToolDefinition;
 }
 export declare function buildProbstatTools(): ToolSet;
 //# sourceMappingURL=tools.d.ts.map

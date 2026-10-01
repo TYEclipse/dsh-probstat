@@ -26,6 +26,7 @@ import {
   poissonCdf,
   poissonPmf,
   poissonQuantile,
+  tCdf,
   tQuantile,
   uniformCdf,
   uniformPdf,
@@ -516,4 +517,284 @@ export function eventProbability(args: EventArgs): EventResult {
     default:
       return { valid: false, error: `unknown operation "${args.operation}" (expected union, intersection, conditional, bayes, complement or at_least_one)` }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* hypothesis_test                                                     */
+/* ------------------------------------------------------------------ */
+
+export type TestKind = 'mean_z' | 'mean_t' | 'proportion'
+export type TestTail = 'two-sided' | 'left' | 'right'
+
+const TAILS: readonly TestTail[] = ['two-sided', 'left', 'right']
+
+export interface HypothesisResult {
+  valid: boolean
+  kind?: string
+  tail?: string
+  statistic?: number
+  standardError?: number
+  df?: number
+  pValue?: number
+  pValueTwoSided?: number
+  pValueLeft?: number
+  pValueRight?: number
+  criticalValue?: number
+  alpha?: number
+  reject?: boolean
+  note?: string
+  error?: string
+}
+
+export interface HypothesisArgs {
+  kind: string
+  tail?: string
+  alpha?: number
+  sampleMean?: number
+  mu0?: number
+  sigma?: number
+  sd?: number
+  n?: number
+  successes?: number
+  p0?: number
+}
+
+function pValueForTail(tail: TestTail, two: number, left: number, right: number): number {
+  if (tail === 'left') return left
+  if (tail === 'right') return right
+  return two
+}
+
+function criticalForTail(tail: TestTail, alpha: number, quantile: (p: number) => number): number {
+  if (tail === 'left') return quantile(alpha)
+  if (tail === 'right') return quantile(1 - alpha)
+  return quantile(1 - alpha / 2)
+}
+
+/**
+ * One-sample hypothesis tests: mean with known sigma (z), mean with unknown
+ * sigma (Student-t, df = n - 1) and a single proportion (normal approximation).
+ * Statistic, all three p-values, the tail-specific critical value and the
+ * alpha decision are reported together so no step is left to recall.
+ */
+export function hypothesisTest(args: HypothesisArgs): HypothesisResult {
+  const kind = args.kind
+  const alpha = args.alpha ?? 0.05
+  if (!inRange(alpha, 0, 1) || alpha === 0 || alpha === 1) {
+    return { valid: false, error: `alpha must lie strictly in (0, 1) (got ${args.alpha})` }
+  }
+  const tail = (args.tail ?? 'two-sided') as TestTail
+  if (!TAILS.includes(tail)) {
+    return { valid: false, error: `unknown tail "${args.tail}" (expected two-sided, left or right)` }
+  }
+
+  /** Assemble the shared result: p-values from the null cdf, critical value per tail. */
+  const finish = (
+    statistic: number,
+    standardError: number,
+    df: number | undefined,
+    quantile: (p: number) => number,
+    note?: string,
+  ): HypothesisResult => {
+    const cdf = df === undefined ? (t: number) => normalCdf(t, 0, 1) : (t: number) => tCdf(t, df)
+    const left = cdf(statistic)
+    const right = 1 - left
+    const two = 2 * (1 - cdf(Math.abs(statistic)))
+    const pValue = pValueForTail(tail, two, left, right)
+    const result: HypothesisResult = {
+      valid: true,
+      kind,
+      tail,
+      statistic,
+      standardError,
+      pValue,
+      pValueTwoSided: two,
+      pValueLeft: left,
+      pValueRight: right,
+      criticalValue: criticalForTail(tail, alpha, quantile),
+      alpha,
+      reject: pValue < alpha,
+    }
+    if (df !== undefined) result.df = df
+    if (note !== undefined) result.note = note
+    return result
+  }
+
+  if (kind === 'mean_z') {
+    if (args.sampleMean === undefined || !Number.isFinite(args.sampleMean)) {
+      return { valid: false, error: `sampleMean is required (got ${args.sampleMean})` }
+    }
+    if (args.mu0 === undefined || !Number.isFinite(args.mu0)) {
+      return { valid: false, error: `mu0 (null-hypothesis mean) is required (got ${args.mu0})` }
+    }
+    if (args.sigma === undefined || !Number.isFinite(args.sigma) || args.sigma <= 0) {
+      return { valid: false, error: `sigma (known population sd) must be positive (got ${args.sigma})` }
+    }
+    if (!isIntFinite(args.n, 1)) return { valid: false, error: `n must be an integer >= 1 (got ${args.n})` }
+    const se = args.sigma / Math.sqrt(args.n)
+    return finish((args.sampleMean - args.mu0) / se, se, undefined, (p) => normalQuantile(p, 0, 1))
+  }
+
+  if (kind === 'mean_t') {
+    if (args.sampleMean === undefined || !Number.isFinite(args.sampleMean)) {
+      return { valid: false, error: `sampleMean is required (got ${args.sampleMean})` }
+    }
+    if (args.mu0 === undefined || !Number.isFinite(args.mu0)) {
+      return { valid: false, error: `mu0 (null-hypothesis mean) is required (got ${args.mu0})` }
+    }
+    if (args.sd === undefined || !Number.isFinite(args.sd) || args.sd <= 0) {
+      return { valid: false, error: `sd (sample sd) must be positive (got ${args.sd})` }
+    }
+    if (!isIntFinite(args.n, 2)) return { valid: false, error: `n must be an integer >= 2 (got ${args.n})` }
+    const df = args.n - 1
+    const se = args.sd / Math.sqrt(args.n)
+    return finish((args.sampleMean - args.mu0) / se, se, df, (p) => tQuantile(p, df))
+  }
+
+  if (kind === 'proportion') {
+    if (!isIntFinite(args.n, 1)) return { valid: false, error: `n must be an integer >= 1 (got ${args.n})` }
+    if (!isIntFinite(args.successes, 0) || args.successes > args.n) {
+      return { valid: false, error: `successes must be an integer in [0, n] = [0, ${args.n}] (got ${args.successes})` }
+    }
+    if (!inRange(args.p0, 0, 1) || args.p0 === 0 || args.p0 === 1) {
+      return { valid: false, error: `p0 (null-hypothesis proportion) must lie strictly in (0, 1) (got ${args.p0})` }
+    }
+    const n = args.n
+    const p0 = args.p0
+    const se = Math.sqrt((p0 * (1 - p0)) / n)
+    const statistic = (args.successes / n - p0) / se
+    const expected = Math.min(n * p0, n * (1 - p0))
+    const note = expected < 5
+      ? `normal approximation is shaky here: n*p0 = ${Number(expected.toPrecision(6))} (< 5); treat the p-value as indicative only`
+      : undefined
+    return finish(statistic, se, undefined, (p) => normalQuantile(p, 0, 1), note)
+  }
+
+  return { valid: false, error: `unknown kind "${args.kind}" (expected mean_z, mean_t or proportion)` }
+}
+
+/* ------------------------------------------------------------------ */
+/* sample_size                                                         */
+/* ------------------------------------------------------------------ */
+
+export type SampleKind = 'mean_z' | 'proportion'
+export type ProportionMethod = 'wald' | 'wilson'
+
+/** Upper bound of the Wilson sample-size search (guards against runaway loops). */
+const SAMPLE_SIZE_MAX_N = 1e7
+
+export interface SampleSizeResult {
+  valid: boolean
+  kind?: string
+  method?: string
+  n?: number
+  nExact?: number
+  criticalValue?: number
+  marginOfError?: number
+  conf?: number
+  assumedP?: number
+  note?: string
+  error?: string
+}
+
+export interface SampleSizeArgs {
+  kind: string
+  sigma?: number
+  p?: number
+  method?: string
+  marginOfError?: number
+  conf?: number
+}
+
+/**
+ * Required sample size for a target margin of error: mean with known sigma
+ * (closed form) and proportion (Wald closed form or the Wilson-consistent
+ * smallest n, solved by binary search on the Wilson half-width).
+ */
+export function sampleSize(args: SampleSizeArgs): SampleSizeResult {
+  const kind = args.kind
+  const conf = args.conf ?? 0.95
+  if (!inRange(conf, 0, 1) || conf === 0 || conf === 1) {
+    return { valid: false, error: `conf must lie strictly in (0, 1) (got ${args.conf})` }
+  }
+  if (args.marginOfError === undefined || !Number.isFinite(args.marginOfError) || args.marginOfError <= 0) {
+    return { valid: false, error: `marginOfError must be a positive number (got ${args.marginOfError})` }
+  }
+  const e = args.marginOfError
+  const z = normalQuantile(1 - (1 - conf) / 2, 0, 1)
+
+  if (kind === 'mean_z') {
+    if (args.sigma === undefined || !Number.isFinite(args.sigma) || args.sigma <= 0) {
+      return { valid: false, error: `sigma (known population sd) must be positive (got ${args.sigma})` }
+    }
+    const nExact = ((z * args.sigma) / e) ** 2
+    return { valid: true, kind, criticalValue: z, marginOfError: e, conf, nExact, n: Math.ceil(nExact) }
+  }
+
+  if (kind === 'proportion') {
+    const method = (args.method ?? 'wald') as ProportionMethod
+    if (method !== 'wald' && method !== 'wilson') {
+      return { valid: false, error: `unknown method "${args.method}" (expected wald or wilson)` }
+    }
+    const p = args.p ?? 0.5
+    if (!Number.isFinite(p) || p <= 0 || p >= 1) {
+      return { valid: false, error: `p (expected proportion) must lie strictly in (0, 1) (got ${args.p})` }
+    }
+    const assumed = args.p === undefined
+      ? 'p defaults to 0.5 (the conservative worst case: p(1-p) is maximal)'
+      : undefined
+
+    if (method === 'wald') {
+      const nExact = (z * z * p * (1 - p)) / (e * e)
+      const result: SampleSizeResult = {
+        valid: true,
+        kind,
+        method,
+        criticalValue: z,
+        marginOfError: e,
+        conf,
+        assumedP: p,
+        nExact,
+        n: Math.ceil(nExact),
+      }
+      result.note = assumed ?? 'Wald closed form n = z^2 p(1-p) / E^2'
+      return result
+    }
+
+    // Wilson: half-width is strictly decreasing in n for fixed p and conf,
+    // so the smallest n meeting the target is found by binary search.
+    const halfWidth = (n: number): number => {
+      const w = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / (1 + (z * z) / n)
+      return w
+    }
+    if (halfWidth(SAMPLE_SIZE_MAX_N) > e) {
+      return { valid: false, error: `no sample size up to ${SAMPLE_SIZE_MAX_N} reaches margin of error ${e}; loosen marginOfError` }
+    }
+    let lo = 1
+    let hi = SAMPLE_SIZE_MAX_N
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (halfWidth(mid) <= e) hi = mid
+      else lo = mid + 1
+    }
+    const result: SampleSizeResult = {
+      valid: true,
+      kind,
+      method,
+      criticalValue: z,
+      marginOfError: e,
+      conf,
+      assumedP: p,
+      n: lo,
+    }
+    result.note = `Wilson target: smallest n whose Wilson half-width (${fmtNumber(halfWidth(lo))}) is <= ${fmtNumber(e)}${assumed === undefined ? '' : `; ${assumed}`}`
+    return result
+  }
+
+  return { valid: false, error: `unknown kind "${args.kind}" (expected mean_z or proportion)` }
+}
+
+/** Compact numeric rendering for note strings (never exponent-soup). */
+function fmtNumber(value: number): string {
+  return String(Number(value.toPrecision(8)))
 }

@@ -1,7 +1,7 @@
 {
   "name": "dsh-probstat",
-  "version": "0.1.3",
-  "description": "Deterministic probability & statistical inference math for DeepSeek Harness (dsh): distribution calculator (normal/binomial/poisson/exponential/uniform/geometric pdf/cdf/survival/quantile/stats), standard-normal z-table math, confidence intervals (mean z/t + Wilson proportion) and event-probability identities (union/intersection/conditional/Bayes) — zero runtime dependencies",
+  "version": "0.2.0",
+  "description": "Deterministic probability & statistical inference math for DeepSeek Harness (dsh): distribution calculator (normal/binomial/poisson/exponential/uniform/geometric pdf/cdf/survival/quantile/stats), standard-normal z-table math, confidence intervals (mean z/t + Wilson proportion), event-probability identities (union/intersection/conditional/Bayes), one-sample hypothesis tests (mean z/t + proportion with p-values, critical values and the alpha decision) and sample-size planning for a target margin of error (mean, proportion via Wald or Wilson) — zero runtime dependencies",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

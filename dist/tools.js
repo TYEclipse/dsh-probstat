@@ -5,7 +5,7 @@
  * @module dsh-probstat/tools
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { confidenceInterval, distCalc, eventProbability, zScore, } from "./core.js";
+import { confidenceInterval, distCalc, eventProbability, hypothesisTest, sampleSize, zScore, } from "./core.js";
 function fmt(value) {
     if (!Number.isFinite(value))
         return String(value);
@@ -72,6 +72,44 @@ function renderEvent(value) {
     const lines = [`${v.operation}: ${fmt(v.result)}`];
     if (v.formula !== undefined)
         lines.push(`formula: ${v.formula}`);
+    return lines.join('\n');
+}
+function renderHypothesis(value) {
+    const v = value;
+    if (!v.valid)
+        return `hypothesis_test failed: ${v.error}`;
+    const lines = [`${v.kind} test — ${v.tail} tail, alpha = ${fmt(v.alpha)}`];
+    lines.push(`statistic: ${fmt(v.statistic)}`);
+    if (v.df !== undefined)
+        lines.push(`df: ${fmt(v.df)}`);
+    lines.push(`standard error: ${fmt(v.standardError)}`);
+    lines.push(`p-value (${v.tail}): ${fmt(v.pValue)}`);
+    lines.push(`p-values: two-sided ${fmt(v.pValueTwoSided)} | left ${fmt(v.pValueLeft)} | right ${fmt(v.pValueRight)}`);
+    lines.push(`critical value (${v.tail}): ${fmt(v.criticalValue)}`);
+    lines.push(v.reject
+        ? `decision: reject the null hypothesis at alpha = ${fmt(v.alpha)}`
+        : `decision: do not reject the null hypothesis at alpha = ${fmt(v.alpha)}`);
+    if (v.note !== undefined)
+        lines.push(`note: ${v.note}`);
+    return lines.join('\n');
+}
+function renderSampleSize(value) {
+    const v = value;
+    if (!v.valid)
+        return `sample_size failed: ${v.error}`;
+    const lines = [
+        `${v.kind} sample size — ${fmt((v.conf ?? 1) * 100)}% confidence, margin of error ${fmt(v.marginOfError)}`,
+    ];
+    if (v.method !== undefined)
+        lines.push(`method: ${v.method}`);
+    lines.push(`required n: ${v.n}`);
+    if (v.nExact !== undefined)
+        lines.push(`exact (uncorrected) n: ${fmt(v.nExact)}`);
+    if (v.assumedP !== undefined)
+        lines.push(`assumed proportion p: ${fmt(v.assumedP)}`);
+    lines.push(`critical value: ${fmt(v.criticalValue)}`);
+    if (v.note !== undefined)
+        lines.push(`note: ${v.note}`);
     return lines.join('\n');
 }
 /* ------------------------------------------------------------------ */
@@ -247,6 +285,105 @@ export function buildProbstatTools() {
             return eventProbability(args);
         },
     });
-    return { dist_calc, z_score, confidence_interval, event_probability };
+    const hypothesis_test = defineTool({
+        name: 'hypothesis_test',
+        description: 'One-sample hypothesis tests with the p-value and the decision spelled out. Three kinds: '
+            + '"mean_z" (mean, known population sigma), "mean_t" (mean, unknown sigma — Student-t with df = n - 1) '
+            + 'and "proportion" (single proportion against p0, normal approximation). Give the sample statistic, the '
+            + 'null value and n; optional tail ("two-sided" default, "left", "right") and alpha (default 0.05). '
+            + 'Returns the test statistic, the standard error, all three p-values, the tail-specific critical value '
+            + 'and whether the null is rejected. Use this instead of recalling critical values or doing p-value '
+            + 'arithmetic by hand.',
+        parameters: {
+            kind: {
+                type: 'string',
+                required: true,
+                enum: ['mean_z', 'mean_t', 'proportion'],
+                description: 'Which one-sample test to run.',
+            },
+            sampleMean: { type: 'number', description: 'Observed sample mean (mean_z / mean_t kinds).' },
+            mu0: { type: 'number', description: 'Null-hypothesis mean mu0 (mean_z / mean_t kinds).' },
+            sigma: { type: 'number', description: 'Known population standard deviation, > 0 (mean_z kind).' },
+            sd: { type: 'number', description: 'Sample standard deviation, > 0 (mean_t kind).' },
+            n: { type: 'number', description: 'Sample size: integer >= 1 (mean_z / proportion) or >= 2 (mean_t).' },
+            successes: { type: 'number', description: 'Observed successes, integer in [0, n] (proportion kind).' },
+            p0: { type: 'number', description: 'Null-hypothesis proportion, strictly in (0, 1) (proportion kind).' },
+            tail: { type: 'string', enum: ['two-sided', 'left', 'right'], description: 'Which p-value to report (default two-sided).' },
+            alpha: { type: 'number', description: 'Significance level in (0, 1) (default 0.05).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    valid: { type: 'boolean', required: true },
+                    kind: { type: 'string' },
+                    tail: { type: 'string' },
+                    statistic: { type: 'number' },
+                    standardError: { type: 'number' },
+                    df: { type: 'number' },
+                    pValue: { type: 'number' },
+                    pValueTwoSided: { type: 'number' },
+                    pValueLeft: { type: 'number' },
+                    pValueRight: { type: 'number' },
+                    criticalValue: { type: 'number' },
+                    alpha: { type: 'number' },
+                    reject: { type: 'boolean' },
+                    note: { type: 'string' },
+                    error: { type: 'string' },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderHypothesis(value) }],
+        },
+        async execute(args) {
+            return hypothesisTest(args);
+        },
+    });
+    const sample_size = defineTool({
+        name: 'sample_size',
+        description: 'Sample size needed to hit a target margin of error. Two kinds: "mean_z" (mean estimate with '
+            + 'known sigma: n = (z*sigma/E)^2) and "proportion" (proportion estimate; method "wald" default uses '
+            + 'n = z^2*p*(1-p)/E^2, method "wilson" returns the smallest n whose Wilson half-width meets E). Give '
+            + 'marginOfError (E > 0) and optionally sigma, p (default 0.5, the conservative worst case) and conf '
+            + '(default 0.95). Returns the required integer n plus the exact uncorrected value. Use this instead of '
+            + 'guessing study sizes.',
+        parameters: {
+            kind: {
+                type: 'string',
+                required: true,
+                enum: ['mean_z', 'proportion'],
+                description: 'Which quantity is being estimated.',
+            },
+            sigma: { type: 'number', description: 'Known population standard deviation, > 0 (mean_z kind).' },
+            p: { type: 'number', description: 'Expected proportion, strictly in (0, 1) (proportion kind; default 0.5).' },
+            method: { type: 'string', enum: ['wald', 'wilson'], description: 'Sample-size formula for the proportion kind (default wald).' },
+            marginOfError: { type: 'number', required: true, description: 'Half-width of the interval you are willing to accept, > 0.' },
+            conf: { type: 'number', description: 'Confidence level in (0, 1) (default 0.95).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    valid: { type: 'boolean', required: true },
+                    kind: { type: 'string' },
+                    method: { type: 'string' },
+                    n: { type: 'number' },
+                    nExact: { type: 'number' },
+                    criticalValue: { type: 'number' },
+                    marginOfError: { type: 'number' },
+                    conf: { type: 'number' },
+                    assumedP: { type: 'number' },
+                    note: { type: 'string' },
+                    error: { type: 'string' },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderSampleSize(value) }],
+        },
+        async execute(args) {
+            return sampleSize(args);
+        },
+    });
+    return { dist_calc, z_score, confidence_interval, event_probability, hypothesis_test, sample_size };
 }
 //# sourceMappingURL=tools.js.map

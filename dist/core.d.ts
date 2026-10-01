@@ -104,4 +104,71 @@ export interface EventArgs {
 }
 /** Event probability identities: union / intersection / conditional / Bayes. */
 export declare function eventProbability(args: EventArgs): EventResult;
+export type TestKind = 'mean_z' | 'mean_t' | 'proportion';
+export type TestTail = 'two-sided' | 'left' | 'right';
+export interface HypothesisResult {
+    valid: boolean;
+    kind?: string;
+    tail?: string;
+    statistic?: number;
+    standardError?: number;
+    df?: number;
+    pValue?: number;
+    pValueTwoSided?: number;
+    pValueLeft?: number;
+    pValueRight?: number;
+    criticalValue?: number;
+    alpha?: number;
+    reject?: boolean;
+    note?: string;
+    error?: string;
+}
+export interface HypothesisArgs {
+    kind: string;
+    tail?: string;
+    alpha?: number;
+    sampleMean?: number;
+    mu0?: number;
+    sigma?: number;
+    sd?: number;
+    n?: number;
+    successes?: number;
+    p0?: number;
+}
+/**
+ * One-sample hypothesis tests: mean with known sigma (z), mean with unknown
+ * sigma (Student-t, df = n - 1) and a single proportion (normal approximation).
+ * Statistic, all three p-values, the tail-specific critical value and the
+ * alpha decision are reported together so no step is left to recall.
+ */
+export declare function hypothesisTest(args: HypothesisArgs): HypothesisResult;
+export type SampleKind = 'mean_z' | 'proportion';
+export type ProportionMethod = 'wald' | 'wilson';
+export interface SampleSizeResult {
+    valid: boolean;
+    kind?: string;
+    method?: string;
+    n?: number;
+    nExact?: number;
+    criticalValue?: number;
+    marginOfError?: number;
+    conf?: number;
+    assumedP?: number;
+    note?: string;
+    error?: string;
+}
+export interface SampleSizeArgs {
+    kind: string;
+    sigma?: number;
+    p?: number;
+    method?: string;
+    marginOfError?: number;
+    conf?: number;
+}
+/**
+ * Required sample size for a target margin of error: mean with known sigma
+ * (closed form) and proportion (Wald closed form or the Wilson-consistent
+ * smallest n, solved by binary search on the Wilson half-width).
+ */
+export declare function sampleSize(args: SampleSizeArgs): SampleSizeResult;
 //# sourceMappingURL=core.d.ts.map

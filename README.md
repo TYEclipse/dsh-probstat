@@ -1,8 +1,8 @@
 # dsh-probstat
 
-Deterministic probability & statistical-inference math for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`). Four zero-runtime-dependency tools that replace the math agents get wrong most often: hallucinated z-table values, distribution cdf/quantile errors, wrong critical values, and sloppy compound-event identities.
+Deterministic probability & statistical-inference math for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`). Six zero-runtime-dependency tools that replace the math agents get wrong most often: hallucinated z-table values, distribution cdf/quantile errors, wrong critical values, sloppy compound-event identities, mis-recalled test decisions and guessed study sizes.
 
-中文简介：DeepSeek Harness 概率与统计推断数学工具箱——分布计算（正态/二项/泊松/指数/均匀/几何的 pdf/cdf/生存函数/分位数/统计量）、标准正态 z 表换算、置信区间（均值 z/t + 比例 Wilson）、事件概率恒等式（并/交/条件/贝叶斯）。零运行时依赖，纯确定性计算。
+中文简介：DeepSeek Harness 概率与统计推断数学工具箱——分布计算（正态/二项/泊松/指数/均匀/几何的 pdf/cdf/生存函数/分位数/统计量）、标准正态 z 表换算、置信区间（均值 z/t + 比例 Wilson）、事件概率恒等式（并/交/条件/贝叶斯）、单样本假设检验（均值 z/t + 比例）、目标误差所需样本量（Wald / Wilson）。零运行时依赖，纯确定性计算。
 
 ## Install
 
@@ -18,6 +18,8 @@ dsh plugin --profile web add github:TYEclipse/dsh-probstat
 | `z_score` | standard-normal table math (z ↔ probability) |
 | `confidence_interval` | mean intervals (z or t) and Wilson proportion intervals |
 | `event_probability` | union / intersection / conditional / Bayes / complement / at-least-one |
+| `hypothesis_test` | one-sample z / t / proportion tests with p-values and the decision |
+| `sample_size` | sample size for a target margin of error (mean, proportion) |
 
 ### dist_calc
 
@@ -54,6 +56,24 @@ Operations: `union` (P(A or B); `independent` default true, false treats events 
 - `operation: "bayes", prior: 0.001, truePositive: 0.99, falsePositive: 0.01` → `0.09016`
 - `operation: "at_least_one", p: 0.05, n: 20` → `0.64151`
 
+### hypothesis_test
+
+Kinds: `mean_z` (known sigma), `mean_t` (unknown sigma; Student-t with df = n − 1), `proportion` (against `p0`, normal approximation). Optional `tail` (`two-sided` default, `left`, `right`) and `alpha` (default `0.05`). Every run reports the statistic, the standard error, all three p-values, the tail-specific critical value and the decision.
+
+- `kind: "mean_z", sampleMean: 102, mu0: 100, sigma: 15, n: 36` → z `0.8`, two-sided p `0.4237108`, critical `1.959964` → do not reject
+- `kind: "mean_t", sampleMean: 5.2, mu0: 5, sd: 1.5, n: 12, tail: "right"` → t `0.4618802`, df `11`, p `0.3265839`
+- `kind: "proportion", successes: 40, n: 100, p0: 0.5` → z `-2`, two-sided p `0.0455003` → reject at 0.05
+
+The proportion kind warns (in `note`) when the normal approximation is shaky (`n·p0 < 5`) rather than quietly returning a p-value.
+
+### sample_size
+
+Kinds: `mean_z` (n = (z·σ/E)²) and `proportion` (`method: "wald"` default: n = z²p(1−p)/E²; `method: "wilson"`: the smallest n whose Wilson half-width meets E). `p` defaults to 0.5, the conservative worst case.
+
+- `kind: "mean_z", sigma: 15, marginOfError: 5` → n `35` (exact 34.573129)
+- `kind: "proportion", p: 0.5, marginOfError: 0.03` → n `1068` (Wald)
+- `kind: "proportion", p: 0.5, marginOfError: 0.03, method: "wilson"` → n `1064` (smallest n whose Wilson interval is that narrow)
+
 ## Numerics & precision
 
 - Normal cdf: Abramowitz & Stegun 7.1.26 erf fit, absolute error ≤ 1.5e-7 (far beyond published 4-decimal z-tables).
@@ -61,6 +81,7 @@ Operations: `union` (P(A or B); `independent` default true, false treats events 
 - Binomial / Poisson: exact pmf via recurrence and cdf by summation (no combinatorics overflow); quantiles by monotone search.
 - Student-t: regularized incomplete beta (Lentz continued fraction) + Lanczos log-gamma; cross-checked against published t-table values (2.2281, 2.0452, 1.8125, 1.984).
 - Exponential / uniform / geometric: closed forms.
+- Hypothesis tests: p-values from the same cdf primitives; critical values via the quantile functions. Wilson sample size: binary search on a half-width that is strictly decreasing in n.
 - All validation errors return `valid: false` with an explanatory `error` string; no tool ever throws on bad numeric input.
 
 ## Development
@@ -68,7 +89,7 @@ Operations: `union` (P(A or B); `independent` default true, false treats events 
 ```bash
 pnpm install
 pnpm build
-pnpm test   # 37 tests; anchors from test/anchors-probstat.py (independent Python oracle)
+pnpm test   # 50 tests; anchors from test/oracle/anchors.py (independent Python oracle)
 pnpm lint
 ```
 
