@@ -2,7 +2,7 @@
  * dsh-probstat — deterministic probability & statistical inference math for
  * DeepSeek Harness.
  *
- * Six zero-dependency tools (pure arithmetic):
+ * Seven zero-dependency tools (pure arithmetic):
  *   dist_calc           — pdf / cdf / survival / quantile / stats for normal,
  *                         binomial, poisson, exponential, uniform, geometric
  *   z_score             — standard-normal table math (z <-> probability)
@@ -13,6 +13,8 @@
  *                         critical values and the alpha decision
  *   sample_size         — required n for a target margin of error (mean with
  *                         known sigma; proportion via Wald or Wilson)
+ *   two_sample_test     — two-group comparisons: difference of means (z,
+ *                         Welch, pooled) and difference of proportions
  *
  * Agents get distribution math wrong in predictable ways: hallucinated
  * z-table values, normal cdf/quantile off by decimals, wrong critical values

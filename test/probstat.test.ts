@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { buildProbstatTools } from '../src/tools.ts'
+import { twoSampleTest } from '../src/core.ts'
 import { normalCdf, normalQuantile, tQuantile } from '../src/math.ts'
 
 /* ------------------------------------------------------------------ */
@@ -572,5 +573,197 @@ describe('t-distribution published table cross-checks', () => {
     expect(tQuantile(0.975, 29)).toBeCloseTo(2.0452, 3)
     expect(tQuantile(0.95, 10)).toBeCloseTo(1.8125, 3)
     expect(tQuantile(0.975, 100)).toBeCloseTo(1.984, 3)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* two_sample_test                                                     */
+/* ------------------------------------------------------------------ */
+
+const executeTwo = tools.two_sample_test.execute as (args: Record<string, unknown>) => Promise<Record<string, unknown>>
+const renderTwo = tools.two_sample_test.output.render as (args: unknown, value: unknown) => Array<{ type: string; text: string }>
+
+describe('two_sample_test tool', () => {
+  it('registers alongside the other six tools', () => {
+    expect(Object.keys(tools).sort()).toEqual([
+      'confidence_interval',
+      'dist_calc',
+      'event_probability',
+      'hypothesis_test',
+      'sample_size',
+      'two_sample_test',
+      'z_score',
+    ])
+  })
+
+  it('mean_z: difference of means with known sigmas (oracle anchors)', async () => {
+    const r = await executeTwo(pick({ kind: 'mean_z', mean1: 102, mean2: 98, sigma1: 10, sigma2: 12, n1: 40, n2: 50 }))
+    expect(r.valid).toBe(true)
+    expect(r.estimate1).toBe(102)
+    expect(r.estimate2).toBe(98)
+    expect(r.difference).toBeCloseTo(4, 12)
+    expect(r.delta0).toBe(0)
+    expect(r.standardError).toBeCloseTo(2.3194827, 6)
+    expect(r.statistic).toBeCloseTo(1.7245225, 6)
+    expect(r.pValueTwoSided).toBeCloseTo(0.0846135, 6)
+    expect(r.pValueLeft).toBeCloseTo(0.9576932, 6)
+    expect(r.pValueRight).toBeCloseTo(0.0423068, 6)
+    expect(r.criticalValue).toBeCloseTo(1.959964, 6)
+    expect(r.tail).toBe('two-sided')
+    expect(r.reject).toBe(false)
+    expect(r.df).toBeUndefined()
+    assertNoUndefined(r)
+  })
+
+  it('mean_z: honours a non-zero null difference and the tail choice', async () => {
+    const r = await executeTwo(pick({
+      kind: 'mean_z', mean1: 102, mean2: 98, sigma1: 10, sigma2: 12, n1: 40, n2: 50, delta0: 2, tail: 'right',
+    }))
+    expect(r.delta0).toBe(2)
+    expect(r.statistic).toBeCloseTo(0.86226123, 7)
+    expect(r.pValueTwoSided).toBeCloseTo(0.3885437, 6)
+    expect(r.pValue).toBeCloseTo(0.1942719, 6)
+    expect(r.criticalValue).toBeCloseTo(1.6448536, 6)
+    expect(r.reject).toBe(false)
+    assertNoUndefined(r)
+  })
+
+  it('mean_welch: unequal variances use the fractional Welch–Satterthwaite df', async () => {
+    const r = await executeTwo(pick({ kind: 'mean_welch', mean1: 5.2, mean2: 4.6, sd1: 1.1, sd2: 0.9, n1: 12, n2: 15 }))
+    expect(r.standardError).toBeCloseTo(0.39348867, 7)
+    expect(r.df).toBeCloseTo(21.166825, 5)
+    expect(r.statistic).toBeCloseTo(1.5248215, 6)
+    expect(r.pValueTwoSided).toBeCloseTo(0.1421069, 6)
+    expect(r.criticalValue).toBeCloseTo(2.0786163, 6)
+    expect(r.reject).toBe(false)
+    // The Welch df is fractional and strictly below the pooled df (n1 + n2 - 2).
+    expect(Number(r.df)).toBeLessThan(25)
+    expect(Number(r.df)).toBeGreaterThan(21)
+    expect(String(r.note)).toContain('not rounded')
+    assertNoUndefined(r)
+  })
+
+  it('mean_pooled: equal-variance assumption gives df = n1 + n2 - 2', async () => {
+    const r = await executeTwo(pick({ kind: 'mean_pooled', mean1: 5.2, mean2: 4.6, sd1: 1.1, sd2: 0.9, n1: 12, n2: 15 }))
+    expect(r.pooledVariance).toBeCloseTo(0.986, 9)
+    expect(r.standardError).toBeCloseTo(0.38457769, 7)
+    expect(r.df).toBe(25)
+    expect(r.statistic).toBeCloseTo(1.5601529, 6)
+    expect(r.pValueTwoSided).toBeCloseTo(0.13129459, 7)
+    expect(r.reject).toBe(false)
+    assertNoUndefined(r)
+
+    const right = await executeTwo(pick({
+      kind: 'mean_pooled', mean1: 5.2, mean2: 4.6, sd1: 1.1, sd2: 0.9, n1: 12, n2: 15, tail: 'right',
+    }))
+    expect(right.criticalValue).toBeCloseTo(1.7081408, 6)
+    expect(right.pValue).toBeCloseTo(0.065647293, 7)
+    assertNoUndefined(right)
+  })
+
+  it('proportion: pooled normal approximation (oracle anchors)', async () => {
+    const r = await executeTwo(pick({ kind: 'proportion', successes1: 45, n1: 100, successes2: 32, n2: 90 }))
+    expect(r.estimate1).toBeCloseTo(0.45, 12)
+    expect(r.estimate2).toBeCloseTo(0.35555556, 7)
+    expect(r.pooledProportion).toBeCloseTo(0.40526316, 7)
+    expect(r.difference).toBeCloseTo(0.094444444, 7)
+    expect(r.standardError).toBeCloseTo(0.07133235, 7)
+    expect(r.statistic).toBeCloseTo(1.3240058, 6)
+    expect(r.pValueTwoSided).toBeCloseTo(0.1855013, 6)
+    expect(r.pValueLeft).toBeCloseTo(0.9072494, 6)
+    expect(r.criticalValue).toBeCloseTo(1.959964, 6)
+    expect(r.reject).toBe(false)
+    expect(r.note).toBeUndefined()
+    assertNoUndefined(r)
+
+    const right = await executeTwo(pick({
+      kind: 'proportion', successes1: 45, n1: 100, successes2: 32, n2: 90, tail: 'right',
+    }))
+    expect(right.criticalValue).toBeCloseTo(1.6448536, 6)
+    expect(right.pValue).toBeCloseTo(0.0927506, 6)
+    assertNoUndefined(right)
+  })
+
+  it('proportion: flags a shaky normal approximation instead of hiding it', async () => {
+    const r = await executeTwo(pick({ kind: 'proportion', successes1: 1, n1: 20, successes2: 2, n2: 20 }))
+    expect(r.pooledProportion).toBeCloseTo(0.075, 12)
+    expect(r.standardError).toBeCloseTo(0.083291656, 7)
+    expect(r.statistic).toBeCloseTo(-0.60030023, 7)
+    expect(r.pValueTwoSided).toBeCloseTo(0.5483061, 6)
+    expect(String(r.note)).toContain('smallest expected cell')
+    assertNoUndefined(r)
+  })
+
+  it('rejects degenerate and ill-formed inputs with a clear error', async () => {
+    let r = await executeTwo(pick({ kind: 'mean_z', mean1: 1, mean2: 0, n1: 5, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('sigma1')
+
+    r = await executeTwo(pick({ kind: 'mean_z', mean1: 1, sigma1: 1, sigma2: 1, n1: 5, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('mean2')
+
+    r = await executeTwo(pick({ kind: 'mean_welch', mean1: 1, mean2: 0, sd1: 1, sd2: 1, n1: 1, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('n1')
+
+    r = await executeTwo(pick({ kind: 'mean_pooled', mean1: 1, mean2: 0, n1: 5, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('sd1')
+
+    // A non-finite delta0 never reaches core through the tool layer (the schema
+    // rejects it), so the core guard is exercised directly here.
+    expect(() => twoSampleTest({
+      kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, delta0: Number.NaN,
+    })).not.toThrow()
+    const nanDelta = twoSampleTest({
+      kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, delta0: Number.NaN,
+    })
+    expect(nanDelta.valid).toBe(false)
+    expect(String(nanDelta.error)).toContain('delta0')
+    await expect(executeTwo(pick({
+      kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, delta0: Number.NaN,
+    }))).rejects.toThrow(/delta0/)
+
+    r = await executeTwo(pick({ kind: 'proportion', successes1: 6, n1: 5, successes2: 1, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('successes1')
+
+    r = await executeTwo(pick({ kind: 'proportion', successes1: 1, n1: 5, successes2: -1, n2: 5 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('successes2')
+
+    // The pooled standard error collapses to zero when every observation fails.
+    r = await executeTwo(pick({ kind: 'proportion', successes1: 0, n1: 20, successes2: 0, n2: 20 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('pooled proportion')
+
+    r = await executeTwo(pick({ kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, alpha: 1 }))
+    expect(r.valid).toBe(false)
+    expect(String(r.error)).toContain('alpha')
+
+    // The tail enum is enforced at the schema layer too, and core keeps its own guard.
+    await expect(executeTwo(pick({
+      kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, tail: 'both',
+    }))).rejects.toThrow(/tail/)
+    const badTail = twoSampleTest({
+      kind: 'mean_z', mean1: 1, mean2: 0, sigma1: 1, sigma2: 1, n1: 5, n2: 5, tail: 'both',
+    })
+    expect(badTail.valid).toBe(false)
+    expect(String(badTail.error)).toContain('tail')
+    assertNoUndefined(badTail)
+  })
+
+  it('renders the comparison and the decision in the tool text', async () => {
+    const value = await executeTwo(pick({ kind: 'proportion', successes1: 45, n1: 100, successes2: 32, n2: 90 }))
+    const [block] = renderTwo({}, value)
+    expect(block.type).toBe('text')
+    expect(block.text).toContain('two-sample test')
+    expect(block.text).toContain('difference')
+    expect(block.text).toContain('pooled proportion')
+    expect(block.text).toContain('do not reject the null hypothesis')
+
+    const failed = renderTwo({}, { valid: false, error: 'boom' })
+    expect(failed[0].text).toContain('two_sample_test failed: boom')
   })
 })

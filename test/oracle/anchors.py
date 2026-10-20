@@ -315,6 +315,100 @@ def z_test_proportion(successes, n, p0):
     )
 
 
+# ------------------------------------------- two-sample (v0.3.0) ------------
+# The t tail is computed by Simpson quadrature on the t density here, NOT by the
+# continued-fraction incomplete beta used by the plugin — an independent
+# algorithm, so a shared coding mistake cannot pass both sides (R63 lesson).
+def t_pdf(x, df):
+    coef = math.exp(math.lgamma((df + 1.0) / 2.0) - math.lgamma(df / 2.0)) / math.sqrt(df * math.pi)
+    return coef * (1.0 + x * x / df) ** (-(df + 1.0) / 2.0)
+
+
+def t_cdf_quad(t, df, n=2000):
+    """P(T <= t) by Simpson quadrature on [0, |t|] (independent of betacf)."""
+    if t == 0.0:
+        return 0.5
+    b = abs(t)
+    h = b / n
+    total = t_pdf(0.0, df) + t_pdf(b, df)
+    for i in range(1, n):
+        total += (4.0 if i % 2 else 2.0) * t_pdf(i * h, df)
+    area = total * h / 3.0
+    return 0.5 + area if t > 0 else 0.5 - area
+
+
+def t_quantile_quad(q, df):
+    lo, hi = -1000.0, 1000.0
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if t_cdf_quad(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def _two_sample(estimate1, estimate2, se, df, delta0, alpha, cdf, quantile):
+    """Shared anchor shaping: statistic, three p-values, three critical values."""
+    difference = estimate1 - estimate2
+    stat = (difference - delta0) / se
+    left = cdf(stat)
+    right = 1.0 - left
+    two = min(1.0, 2.0 * (1.0 - cdf(abs(stat))))
+    out = dict(
+        estimate1=estimate1,
+        estimate2=estimate2,
+        difference=difference,
+        standardError=se,
+        statistic=stat,
+        pTwoSided=two,
+        pLeft=left,
+        pRight=right,
+        critTwoSided=quantile(1.0 - alpha / 2.0),
+        critLeft=quantile(alpha),
+        critRight=quantile(1.0 - alpha),
+    )
+    if df is not None:
+        out['df'] = df
+    return out
+
+
+def two_sample_z(m1, m2, sigma1, sigma2, n1, n2, delta0=0.0, alpha=0.05):
+    se = math.sqrt(sigma1 ** 2 / n1 + sigma2 ** 2 / n2)
+    return _two_sample(m1, m2, se, None, delta0, alpha,
+                       lambda t: normal_cdf(t), lambda p: normal_quantile(p))
+
+
+def two_sample_welch(m1, m2, sd1, sd2, n1, n2, delta0=0.0, alpha=0.05):
+    v1 = sd1 * sd1 / n1
+    v2 = sd2 * sd2 / n2
+    se = math.sqrt(v1 + v2)
+    df = (v1 + v2) ** 2 / (v1 * v1 / (n1 - 1) + v2 * v2 / (n2 - 1))
+    return _two_sample(m1, m2, se, df, delta0, alpha,
+                       lambda t: t_cdf_quad(t, df), lambda p: t_quantile_quad(p, df))
+
+
+def two_sample_pooled(m1, m2, sd1, sd2, n1, n2, delta0=0.0, alpha=0.05):
+    df = n1 + n2 - 2
+    pooled_var = ((n1 - 1) * sd1 * sd1 + (n2 - 1) * sd2 * sd2) / df
+    se = math.sqrt(pooled_var * (1.0 / n1 + 1.0 / n2))
+    out = _two_sample(m1, m2, se, df, delta0, alpha,
+                      lambda t: t_cdf_quad(t, df), lambda p: t_quantile_quad(p, df))
+    out['pooledVariance'] = pooled_var
+    return out
+
+
+def two_sample_proportion(x1, n1, x2, n2, delta0=0.0, alpha=0.05):
+    p1 = x1 / n1
+    p2 = x2 / n2
+    pooled = (x1 + x2) / (n1 + n2)
+    se = math.sqrt(pooled * (1.0 - pooled) * (1.0 / n1 + 1.0 / n2))
+    out = _two_sample(p1, p2, se, None, delta0, alpha,
+                      lambda t: normal_cdf(t), lambda p: normal_quantile(p))
+    out['pooledProportion'] = pooled
+    return out
+
+
 # ------------------------------------------------------ sample size --------
 def sample_size_mean(sigma, e, conf):
     z = normal_quantile(1.0 - (1.0 - conf) / 2.0)
@@ -532,8 +626,65 @@ ss['proportion wilson p=0.2 E=0.05 n'] = _s6['n']
 ss['proportion wilson p=0.2 E=0.05 halfWidthAtN'] = _s6['halfWidthAtN']
 
 
+# ----------------------------------------------------------------------
+# D. two_sample_test anchors (v0.3.0)
+# ----------------------------------------------------------------------
+two = {}
+
+# --- mean_z: known sigmas (se = sqrt(100/40 + 144/50))
+_tz = two_sample_z(102.0, 98.0, 10.0, 12.0, 40, 50)
+two['mean_z 102/98 sigma=10/12 n=40/50 standardError'] = _tz['standardError']
+two['mean_z 102/98 sigma=10/12 n=40/50 statistic'] = _tz['statistic']
+two['mean_z 102/98 sigma=10/12 n=40/50 pTwoSided'] = _tz['pTwoSided']
+two['mean_z 102/98 sigma=10/12 n=40/50 pLeft'] = _tz['pLeft']
+two['mean_z 102/98 sigma=10/12 n=40/50 pRight'] = _tz['pRight']
+two['mean_z 102/98 sigma=10/12 n=40/50 critTwoSided'] = _tz['critTwoSided']
+two['mean_z 102/98 sigma=10/12 n=40/50 critLeft'] = _tz['critLeft']
+
+# --- mean_z with a non-zero null difference (delta0 = 2 -> (4 - 2) / se)
+_tzd = two_sample_z(102.0, 98.0, 10.0, 12.0, 40, 50, delta0=2.0)
+two['mean_z delta0=2 statistic'] = _tzd['statistic']
+two['mean_z delta0=2 pTwoSided'] = _tzd['pTwoSided']
+two['mean_z delta0=2 pRight'] = _tzd['pRight']
+
+# --- mean_welch: unequal variances, fractional Welch–Satterthwaite df
+_tw = two_sample_welch(5.2, 4.6, 1.1, 0.9, 12, 15)
+two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 standardError'] = _tw['standardError']
+two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 df'] = _tw['df']
+two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 statistic'] = _tw['statistic']
+two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 pTwoSided'] = _tw['pTwoSided']
+two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 critTwoSided'] = _tw['critTwoSided']
+
+# --- mean_pooled: same data, equal-variance assumption
+_tp = two_sample_pooled(5.2, 4.6, 1.1, 0.9, 12, 15)
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 pooledVariance'] = _tp['pooledVariance']
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 standardError'] = _tp['standardError']
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 df'] = _tp['df']
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 statistic'] = _tp['statistic']
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 pTwoSided'] = _tp['pTwoSided']
+two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 critRight'] = _tp['critRight']
+
+# --- proportion: pooled normal approximation (45/100 vs 32/90)
+_tq = two_sample_proportion(45, 100, 32, 90)
+two['proportion 45/100 vs 32/90 pooledProportion'] = _tq['pooledProportion']
+two['proportion 45/100 vs 32/90 standardError'] = _tq['standardError']
+two['proportion 45/100 vs 32/90 difference'] = _tq['difference']
+two['proportion 45/100 vs 32/90 statistic'] = _tq['statistic']
+two['proportion 45/100 vs 32/90 pTwoSided'] = _tq['pTwoSided']
+two['proportion 45/100 vs 32/90 pLeft'] = _tq['pLeft']
+two['proportion 45/100 vs 32/90 critRight'] = _tq['critRight']
+
+# --- proportion with a shaky normal approximation (smallest expected cell < 5)
+_tqs = two_sample_proportion(1, 20, 2, 20)
+two['proportion 1/20 vs 2/20 pooledProportion'] = _tqs['pooledProportion']
+two['proportion 1/20 vs 2/20 standardError'] = _tqs['standardError']
+two['proportion 1/20 vs 2/20 statistic'] = _tqs['statistic']
+two['proportion 1/20 vs 2/20 pTwoSided'] = _tqs['pTwoSided']
+
+
 def emit():
-    for label, table in (('A legacy', legacy), ('B hypothesis_test', hyp), ('C sample_size', ss)):
+    for label, table in (('A legacy', legacy), ('B hypothesis_test', hyp), ('C sample_size', ss),
+                         ('D two_sample_test', two)):
         print(f"=== {label} ===")
         for key, value in table.items():
             if isinstance(value, float):
@@ -571,6 +722,43 @@ def check():
     assert ss['proportion wilson p=0.2 E=0.05 halfWidthAtN'] <= 0.05
     # Wald vs Wilson agree within a percent at these targets
     assert abs(ss['proportion wilson p=0.5 E=0.03 n'] - ss['proportion wald p=0.5 E=0.03 n']) <= 5
+    # --- two_sample_test (v0.3.0) ---
+    # Two independent t-tail algorithms must agree: Simpson quadrature here vs the
+    # continued-fraction incomplete beta used elsewhere in this oracle and by the
+    # plugin. Disagreement means one of them is wrong.
+    for df_probe in (3, 10, 21.16, 25, 41.5):
+        for t_probe in (-2.5, -0.7, 0.0, 0.4, 1.9, 3.3):
+            assert abs(t_cdf_quad(t_probe, df_probe) - t_cdf(t_probe, df_probe)) < 2e-9, \
+                (t_probe, df_probe, t_cdf_quad(t_probe, df_probe), t_cdf(t_probe, df_probe))
+    # Published t-table values used as an external ruler (integer df only).
+    assert abs(t_quantile_quad(0.975, 10) - 2.228138852) < 1e-6
+    assert abs(t_quantile_quad(0.975, 30) - 2.042272456) < 1e-6
+    assert abs(t_quantile_quad(0.95, 11) - 1.795884819) < 1e-6
+    # mean_z: se^2 must equal sigma1^2/n1 + sigma2^2/n2 and the statistic must be 4/se.
+    assert abs(two['mean_z 102/98 sigma=10/12 n=40/50 standardError'] ** 2 - 5.38) < 1e-15
+    assert abs(two['mean_z 102/98 sigma=10/12 n=40/50 statistic']
+               - 4.0 / two['mean_z 102/98 sigma=10/12 n=40/50 standardError']) < 1e-15
+    # mean_welch: the Welch df is strictly below the pooled df here (unequal variances).
+    assert two['mean_welch 5.2/4.6 sd=1.1/0.9 n=12/15 df'] < 25.0
+    assert abs(two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 df'] - 25.0) < 1e-12
+    # mean_pooled: pooled variance is the df-weighted mean of the two variances.
+    assert abs(two['mean_pooled 5.2/4.6 sd=1.1/0.9 n=12/15 pooledVariance']
+               - (11 * 1.21 + 14 * 0.81) / 25) < 1e-15
+    # proportion: pooled proportion equals total successes over total n.
+    assert abs(two['proportion 45/100 vs 32/90 pooledProportion'] - 77.0 / 190.0) < 1e-15
+    assert abs(two['proportion 45/100 vs 32/90 difference'] - (0.45 - 32.0 / 90.0)) < 1e-15
+    # p-values stay inside [0, 1] and the two-sided one is twice the smaller tail
+    # (symmetric null). NOTE: on a positive statistic pLeft is LARGE, so the naive
+    # "two-sided >= left" invariant is wrong — the first draft of this check said
+    # exactly that and its own assertion caught it.
+    for key, value in two.items():
+        if key.endswith(('pTwoSided', 'pLeft', 'pRight')):
+            assert 0.0 <= value <= 1.0, (key, value)
+    assert abs(two['proportion 45/100 vs 32/90 pTwoSided']
+               - 2.0 * min(two['proportion 45/100 vs 32/90 pLeft'],
+                           1.0 - two['proportion 45/100 vs 32/90 pLeft'])) < 1e-15
+    assert abs(two['mean_z 102/98 sigma=10/12 n=40/50 pTwoSided']
+               - 2.0 * two['mean_z 102/98 sigma=10/12 n=40/50 pRight']) < 1e-15
     print("ALL CROSS-CHECKS PASSED")
 
 

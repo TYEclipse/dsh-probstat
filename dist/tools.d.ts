@@ -12,6 +12,7 @@ export interface ToolSet {
     event_probability: ToolDefinition;
     hypothesis_test: ToolDefinition;
     sample_size: ToolDefinition;
+    two_sample_test: ToolDefinition;
 }
 export declare function buildProbstatTools(): ToolSet;
 //# sourceMappingURL=tools.d.ts.map

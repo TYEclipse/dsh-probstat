@@ -5,7 +5,7 @@
  * @module dsh-probstat/tools
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { confidenceInterval, distCalc, eventProbability, hypothesisTest, sampleSize, zScore, } from "./core.js";
+import { confidenceInterval, distCalc, eventProbability, hypothesisTest, sampleSize, twoSampleTest, zScore, } from "./core.js";
 function fmt(value) {
     if (!Number.isFinite(value))
         return String(value);
@@ -108,6 +108,31 @@ function renderSampleSize(value) {
     if (v.assumedP !== undefined)
         lines.push(`assumed proportion p: ${fmt(v.assumedP)}`);
     lines.push(`critical value: ${fmt(v.criticalValue)}`);
+    if (v.note !== undefined)
+        lines.push(`note: ${v.note}`);
+    return lines.join('\n');
+}
+function renderTwoSample(value) {
+    const v = value;
+    if (!v.valid)
+        return `two_sample_test failed: ${v.error}`;
+    const lines = [`${v.kind} two-sample test — ${v.tail} tail, alpha = ${fmt(v.alpha)}`];
+    lines.push(`estimate 1: ${fmt(v.estimate1)} | estimate 2: ${fmt(v.estimate2)}`);
+    lines.push(`difference: ${fmt(v.difference)} (null difference ${fmt(v.delta0 ?? 0)})`);
+    lines.push(`standard error: ${fmt(v.standardError)}`);
+    lines.push(`statistic: ${fmt(v.statistic)}`);
+    if (v.df !== undefined)
+        lines.push(`df: ${fmt(v.df)}`);
+    if (v.pooledVariance !== undefined)
+        lines.push(`pooled variance: ${fmt(v.pooledVariance)}`);
+    if (v.pooledProportion !== undefined)
+        lines.push(`pooled proportion: ${fmt(v.pooledProportion)}`);
+    lines.push(`p-value (${v.tail}): ${fmt(v.pValue)}`);
+    lines.push(`p-values: two-sided ${fmt(v.pValueTwoSided)} | left ${fmt(v.pValueLeft)} | right ${fmt(v.pValueRight)}`);
+    lines.push(`critical value (${v.tail}): ${fmt(v.criticalValue)}`);
+    lines.push(v.reject
+        ? `decision: reject the null hypothesis at alpha = ${fmt(v.alpha)}`
+        : `decision: do not reject the null hypothesis at alpha = ${fmt(v.alpha)}`);
     if (v.note !== undefined)
         lines.push(`note: ${v.note}`);
     return lines.join('\n');
@@ -384,6 +409,73 @@ export function buildProbstatTools() {
             return sampleSize(args);
         },
     });
-    return { dist_calc, z_score, confidence_interval, event_probability, hypothesis_test, sample_size };
+    const two_sample_test = defineTool({
+        name: 'two_sample_test',
+        description: 'Two-sample hypothesis tests for comparing two independent groups, with the p-value and the '
+            + 'decision spelled out. Four kinds: "mean_z" (difference of means, known population sigmas), '
+            + '"mean_welch" (difference of means, unknown sigmas, unequal variances — Welch t with Welch–Satterthwaite '
+            + 'df), "mean_pooled" (difference of means, unknown sigmas, equal-variance pooled t with df = n1 + n2 - 2) '
+            + 'and "proportion" (difference of two proportions, pooled normal approximation). Give both group summaries '
+            + '(mean1/mean2 plus sigma or sd, or successes1/successes2) and both sample sizes; optional delta0 '
+            + '(null-hypothesis difference, default 0), tail ("two-sided" default, "left", "right") and alpha '
+            + '(default 0.05). Returns both estimates, the difference, the standard error, the statistic, df, all three '
+            + 'p-values, the tail-specific critical value and whether the null is rejected. Use this instead of doing '
+            + 'A/B or before/after comparisons by hand.',
+        parameters: {
+            kind: {
+                type: 'string',
+                required: true,
+                enum: ['mean_z', 'mean_welch', 'mean_pooled', 'proportion'],
+                description: 'Which two-sample test to run.',
+            },
+            mean1: { type: 'number', description: 'Mean of the first group (mean kinds).' },
+            mean2: { type: 'number', description: 'Mean of the second group (mean kinds).' },
+            sigma1: { type: 'number', description: 'Known population standard deviation of group 1, > 0 (mean_z kind).' },
+            sigma2: { type: 'number', description: 'Known population standard deviation of group 2, > 0 (mean_z kind).' },
+            sd1: { type: 'number', description: 'Sample standard deviation of group 1, > 0 (mean_welch / mean_pooled kinds).' },
+            sd2: { type: 'number', description: 'Sample standard deviation of group 2, > 0 (mean_welch / mean_pooled kinds).' },
+            n1: { type: 'number', description: 'Sample size of group 1: integer >= 1 (mean_z / proportion) or >= 2 (t kinds).' },
+            n2: { type: 'number', description: 'Sample size of group 2: integer >= 1 (mean_z / proportion) or >= 2 (t kinds).' },
+            successes1: { type: 'number', description: 'Observed successes in group 1, integer in [0, n1] (proportion kind).' },
+            successes2: { type: 'number', description: 'Observed successes in group 2, integer in [0, n2] (proportion kind).' },
+            delta0: { type: 'number', description: 'Null-hypothesis difference (group 1 minus group 2), default 0.' },
+            tail: { type: 'string', enum: ['two-sided', 'left', 'right'], description: 'Which p-value to report (default two-sided).' },
+            alpha: { type: 'number', description: 'Significance level in (0, 1) (default 0.05).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    valid: { type: 'boolean', required: true },
+                    kind: { type: 'string' },
+                    tail: { type: 'string' },
+                    estimate1: { type: 'number' },
+                    estimate2: { type: 'number' },
+                    difference: { type: 'number' },
+                    delta0: { type: 'number' },
+                    standardError: { type: 'number' },
+                    statistic: { type: 'number' },
+                    df: { type: 'number' },
+                    pooledVariance: { type: 'number' },
+                    pooledProportion: { type: 'number' },
+                    pValue: { type: 'number' },
+                    pValueTwoSided: { type: 'number' },
+                    pValueLeft: { type: 'number' },
+                    pValueRight: { type: 'number' },
+                    criticalValue: { type: 'number' },
+                    alpha: { type: 'number' },
+                    reject: { type: 'boolean' },
+                    note: { type: 'string' },
+                    error: { type: 'string' },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderTwoSample(value) }],
+        },
+        async execute(args) {
+            return twoSampleTest(args);
+        },
+    });
+    return { dist_calc, z_score, confidence_interval, event_probability, hypothesis_test, sample_size, two_sample_test };
 }
 //# sourceMappingURL=tools.js.map

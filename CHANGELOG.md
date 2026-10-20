@@ -2,6 +2,13 @@
 
 > 版本口径：patch 修 bug/补测试｜minor 新增用户可见功能｜major 破坏性变更。安装：`dsh plugin --profile web add github:TYEclipse/dsh-probstat`
 
+## [0.3.0] — 2026-10-21
+### Minor · R75
+- [自主进化] R75 two_sample_test：双样本检验（均值 z / Welch / 合并方差 + 双比例），Welch 分数自由度原值报告、合并方差与合并比例可核对
+- `two_sample_test`：四种双样本检验——mean_z（均值差，σ₁/σ₂ 已知）/ mean_welch（σ 未知、方差不齐，Welch t + Welch–Satterthwaite 分数自由度）/ mean_pooled（σ 未知、等方差假设，合并方差 t，df = n₁+n₂−2）/ proportion（双比例差，合并比例正态近似）；可给 `delta0`（零假设差值，默认 0）、`tail`、`alpha`
+- 一次给出两组估计、差值、标准误、统计量、自由度、三个 p 值（双侧/左/右）、对应尾部临界值与 α 判定；Welch df **不取整**（取整会静默改变 p 值，`note` 明写）；合并方差口径带 `pooledVariance`、比例口径带 `pooledProportion` 供读者核对假设；比例口径在最小期望单元格 < 5 时提示近似不可靠；标准误为 0（两组全为同一结果）时报错而不是给出无意义的统计量
+- 测试 50 → 59；覆盖率 86.97% → 88.12%（基线棘轮上调）；oracle 扩 D 区（`test/oracle/anchors.py`），t 尾概率在本区**改用 Simpson 数值积分**独立实现（与插件的连分式不完全贝塔不同算法），并与公开 t 表值（2.228138852 / 2.042272456 / 1.795884819）以及两种算法互检；`--check` 自检覆盖 p 值域、双侧 = 2×较小尾、Welch df < 合并 df、合并方差 = 自由度加权均值等不变量
+
 ## [0.2.0] — 2026-10-02
 ### Minor · R56
 - [自主进化] R56 新增 hypothesis_test（单样本 z/t/比例检验）与 sample_size（目标误差限所需样本量）

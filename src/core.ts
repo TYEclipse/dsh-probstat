@@ -794,6 +794,217 @@ export function sampleSize(args: SampleSizeArgs): SampleSizeResult {
   return { valid: false, error: `unknown kind "${args.kind}" (expected mean_z or proportion)` }
 }
 
+/* ------------------------------------------------------------------ */
+/* two_sample_test                                                     */
+/* ------------------------------------------------------------------ */
+
+export type TwoSampleKind = 'mean_z' | 'mean_welch' | 'mean_pooled' | 'proportion'
+
+const TWO_SAMPLE_KINDS: readonly TwoSampleKind[] = ['mean_z', 'mean_welch', 'mean_pooled', 'proportion']
+
+export interface TwoSampleResult {
+  valid: boolean
+  kind?: string
+  tail?: string
+  estimate1?: number
+  estimate2?: number
+  difference?: number
+  delta0?: number
+  standardError?: number
+  statistic?: number
+  df?: number
+  pValue?: number
+  pValueTwoSided?: number
+  pValueLeft?: number
+  pValueRight?: number
+  criticalValue?: number
+  alpha?: number
+  pooledProportion?: number
+  pooledVariance?: number
+  reject?: boolean
+  note?: string
+  error?: string
+}
+
+export interface TwoSampleArgs {
+  kind: string
+  tail?: string
+  alpha?: number
+  delta0?: number
+  mean1?: number
+  mean2?: number
+  sigma1?: number
+  sigma2?: number
+  sd1?: number
+  sd2?: number
+  n1?: number
+  n2?: number
+  successes1?: number
+  successes2?: number
+}
+
+/** Positive-variance guard shared by the two-sample mean kinds. */
+function positiveSd(value: number | undefined, label: string): string | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return `${label} must be a positive number (got ${value})`
+  }
+  return undefined
+}
+
+/**
+ * Two-sample hypothesis tests: difference of means with known sigmas (z),
+ * with unknown sigmas under Welch (unequal variances) or pooled (equal
+ * variances) assumptions, and a difference of two proportions (pooled normal
+ * approximation). Reports both group estimates, the difference, the standard
+ * error, the statistic, the Welch–Satterthwaite / pooled df, all three
+ * p-values, the tail-specific critical value and the alpha decision.
+ */
+export function twoSampleTest(args: TwoSampleArgs): TwoSampleResult {
+  const kind = args.kind as TwoSampleKind
+  if (!TWO_SAMPLE_KINDS.includes(kind)) {
+    return {
+      valid: false,
+      error: `unknown kind "${args.kind}" (expected mean_z, mean_welch, mean_pooled or proportion)`,
+    }
+  }
+  const alpha = args.alpha ?? 0.05
+  if (!Number.isFinite(alpha) || alpha <= 0 || alpha >= 1) {
+    return { valid: false, error: `alpha must lie strictly in (0, 1) (got ${args.alpha})` }
+  }
+  const tail = (args.tail ?? 'two-sided') as TestTail
+  if (!TAILS.includes(tail)) {
+    return { valid: false, error: `unknown tail "${args.tail}" (expected two-sided, left or right)` }
+  }
+  const delta0 = args.delta0 ?? 0
+  if (!Number.isFinite(delta0)) {
+    return { valid: false, error: `delta0 (null-hypothesis difference) must be a finite number (got ${args.delta0})` }
+  }
+
+  /** Shared tail/decision assembly (same convention as hypothesis_test). */
+  const finish = (
+    estimate1: number,
+    estimate2: number,
+    difference: number,
+    standardError: number,
+    df: number | undefined,
+    quantile: (p: number) => number,
+    extra: { pooledProportion?: number; pooledVariance?: number },
+    note?: string,
+  ): TwoSampleResult => {
+    if (!(standardError > 0)) {
+      return {
+        valid: false,
+        error: 'the standard error is zero, so the test statistic is undefined — check that both groups have positive spread and n >= 1',
+      }
+    }
+    const statistic = (difference - delta0) / standardError
+    const cdf = df === undefined ? (t: number) => normalCdf(t, 0, 1) : (t: number) => tCdf(t, df)
+    const left = cdf(statistic)
+    if (!Number.isFinite(left)) {
+      return { valid: false, error: 'the tail probability is not a finite number — the inputs are outside the numeric range of this implementation' }
+    }
+    const right = 1 - left
+    const two = Math.min(1, 2 * (1 - cdf(Math.abs(statistic))))
+    const pValue = pValueForTail(tail, two, left, right)
+    const result: TwoSampleResult = {
+      valid: true,
+      kind,
+      tail,
+      estimate1,
+      estimate2,
+      difference,
+      delta0,
+      standardError,
+      statistic,
+      pValue,
+      pValueTwoSided: two,
+      pValueLeft: left,
+      pValueRight: right,
+      criticalValue: criticalForTail(tail, alpha, quantile),
+      alpha,
+      reject: pValue < alpha,
+    }
+    if (df !== undefined) result.df = df
+    if (extra.pooledProportion !== undefined) result.pooledProportion = extra.pooledProportion
+    if (extra.pooledVariance !== undefined) result.pooledVariance = extra.pooledVariance
+    if (note !== undefined) result.note = note
+    return result
+  }
+
+  const needMean = (label: string, value: number | undefined): string | undefined => {
+    if (value === undefined || !Number.isFinite(value)) {
+      return `${label} is required and must be a finite number (got ${value})`
+    }
+    return undefined
+  }
+
+  if (kind === 'mean_z' || kind === 'mean_welch' || kind === 'mean_pooled') {
+    const meanError = needMean('mean1', args.mean1) ?? needMean('mean2', args.mean2)
+    if (meanError !== undefined) return { valid: false, error: meanError }
+    const n1 = args.n1
+    const n2 = args.n2
+    if (!isIntFinite(n1, 1)) return { valid: false, error: `n1 must be an integer >= 1 (got ${args.n1})` }
+    if (!isIntFinite(n2, 1)) return { valid: false, error: `n2 must be an integer >= 1 (got ${args.n2})` }
+    const difference = args.mean1! - args.mean2!
+
+    if (kind === 'mean_z') {
+      const sdError = positiveSd(args.sigma1, 'sigma1') ?? positiveSd(args.sigma2, 'sigma2')
+      if (sdError !== undefined) return { valid: false, error: sdError }
+      const se = Math.sqrt((args.sigma1! ** 2) / n1 + (args.sigma2! ** 2) / n2)
+      return finish(args.mean1!, args.mean2!, difference, se, undefined, (p) => normalQuantile(p, 0, 1), {})
+    }
+
+    if (n1 < 2) return { valid: false, error: `n1 must be an integer >= 2 for a sample-variance test (got ${args.n1})` }
+    if (n2 < 2) return { valid: false, error: `n2 must be an integer >= 2 for a sample-variance test (got ${args.n2})` }
+    const sdError = positiveSd(args.sd1, 'sd1') ?? positiveSd(args.sd2, 'sd2')
+    if (sdError !== undefined) return { valid: false, error: sdError }
+    const sd1 = args.sd1!
+    const sd2 = args.sd2!
+
+    if (kind === 'mean_welch') {
+      const v1 = (sd1 * sd1) / n1
+      const v2 = (sd2 * sd2) / n2
+      const se = Math.sqrt(v1 + v2)
+      if (!(se > 0)) return finish(args.mean1!, args.mean2!, difference, se, undefined, (p) => normalQuantile(p, 0, 1), {})
+      const df = ((v1 + v2) ** 2) / ((v1 * v1) / (n1 - 1) + (v2 * v2) / (n2 - 1))
+      const note = `Welch–Satterthwaite df ${fmtNumber(df)} is fractional and is not rounded — the t tail is evaluated at that exact df`
+      return finish(args.mean1!, args.mean2!, difference, se, df, (p) => tQuantile(p, df), {}, note)
+    }
+
+    const df = n1 + n2 - 2
+    const pooledVariance = ((n1 - 1) * sd1 * sd1 + (n2 - 1) * sd2 * sd2) / df
+    const se = Math.sqrt(pooledVariance * (1 / n1 + 1 / n2))
+    return finish(args.mean1!, args.mean2!, difference, se, df, (p) => tQuantile(p, df), { pooledVariance })
+  }
+
+  // proportion: two independent proportions, pooled (null) standard error.
+  const n1 = args.n1
+  const n2 = args.n2
+  if (!isIntFinite(n1, 1)) return { valid: false, error: `n1 must be an integer >= 1 (got ${args.n1})` }
+  if (!isIntFinite(n2, 1)) return { valid: false, error: `n2 must be an integer >= 1 (got ${args.n2})` }
+  if (!isIntFinite(args.successes1, 0) || args.successes1 > n1) {
+    return { valid: false, error: `successes1 must be an integer in [0, n1] = [0, ${n1}] (got ${args.successes1})` }
+  }
+  if (!isIntFinite(args.successes2, 0) || args.successes2 > n2) {
+    return { valid: false, error: `successes2 must be an integer in [0, n2] = [0, ${n2}] (got ${args.successes2})` }
+  }
+  const p1 = args.successes1 / n1
+  const p2 = args.successes2 / n2
+  const pooled = (args.successes1 + args.successes2) / (n1 + n2)
+  if (pooled === 0 || pooled === 1) {
+    return {
+      valid: false,
+      error: `the pooled proportion is ${pooled}, so the pooled standard error is zero and the test is undefined — both groups have identical all-fail or all-success outcomes`,
+    }
+  }
+  const se = Math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2))
+  const smallestCell = Math.min(n1 * pooled, n1 * (1 - pooled), n2 * pooled, n2 * (1 - pooled))
+  const note = smallestCell < 5
+    ? `normal approximation is shaky here: the smallest expected cell count is ${fmtNumber(smallestCell)} (< 5); treat the p-value as indicative only`
+    : undefined
+  return finish(p1, p2, p1 - p2, se, undefined, (p) => normalQuantile(p, 0, 1), { pooledProportion: pooled }, note)
+}
+
 /** Compact numeric rendering for note strings (never exponent-soup). */
 function fmtNumber(value: number): string {
   return String(Number(value.toPrecision(8)))

@@ -1,8 +1,8 @@
 # dsh-probstat
 
-Deterministic probability & statistical-inference math for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`). Six zero-runtime-dependency tools that replace the math agents get wrong most often: hallucinated z-table values, distribution cdf/quantile errors, wrong critical values, sloppy compound-event identities, mis-recalled test decisions and guessed study sizes.
+Deterministic probability & statistical-inference math for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`). Seven zero-runtime-dependency tools that replace the math agents get wrong most often: hallucinated z-table values, distribution cdf/quantile errors, wrong critical values, sloppy compound-event identities, mis-recalled test decisions, guessed study sizes and hand-waved A/B comparisons.
 
-中文简介：DeepSeek Harness 概率与统计推断数学工具箱——分布计算（正态/二项/泊松/指数/均匀/几何的 pdf/cdf/生存函数/分位数/统计量）、标准正态 z 表换算、置信区间（均值 z/t + 比例 Wilson）、事件概率恒等式（并/交/条件/贝叶斯）、单样本假设检验（均值 z/t + 比例）、目标误差所需样本量（Wald / Wilson）。零运行时依赖，纯确定性计算。
+中文简介：DeepSeek Harness 概率与统计推断数学工具箱——分布计算（正态/二项/泊松/指数/均匀/几何的 pdf/cdf/生存函数/分位数/统计量）、标准正态 z 表换算、置信区间（均值 z/t + 比例 Wilson）、事件概率恒等式（并/交/条件/贝叶斯）、单样本假设检验（均值 z/t + 比例）、目标误差所需样本量（Wald / Wilson）、双样本检验（均值 z/Welch/合并方差 + 双比例）。零运行时依赖，纯确定性计算。
 
 ## Install
 
@@ -20,6 +20,7 @@ dsh plugin --profile web add github:TYEclipse/dsh-probstat
 | `event_probability` | union / intersection / conditional / Bayes / complement / at-least-one |
 | `hypothesis_test` | one-sample z / t / proportion tests with p-values and the decision |
 | `sample_size` | sample size for a target margin of error (mean, proportion) |
+| `two_sample_test` | two-group comparisons: difference of means (z / Welch / pooled) and of proportions |
 
 ### dist_calc
 
@@ -74,6 +75,17 @@ Kinds: `mean_z` (n = (z·σ/E)²) and `proportion` (`method: "wald"` default: n 
 - `kind: "proportion", p: 0.5, marginOfError: 0.03` → n `1068` (Wald)
 - `kind: "proportion", p: 0.5, marginOfError: 0.03, method: "wilson"` → n `1064` (smallest n whose Wilson interval is that narrow)
 
+### two_sample_test
+
+Two independent groups. Kinds: `mean_z` (difference of means, **known** population sigmas), `mean_welch` (unknown sigmas, unequal variances — Welch t with the fractional Welch–Satterthwaite df), `mean_pooled` (unknown sigmas, equal-variance pooled t with df = n₁ + n₂ − 2) and `proportion` (difference of two proportions, pooled normal approximation). Optional `delta0` (the null-hypothesis difference, default `0`), `tail` and `alpha`. Every run reports both estimates, the difference, the standard error, the statistic, the df, all three p-values, the tail-specific critical value and the decision.
+
+- `kind: "mean_z", mean1: 102, mean2: 98, sigma1: 10, sigma2: 12, n1: 40, n2: 50` → z `1.7245225`, two-sided p `0.0846135` → do not reject at 0.05
+- `kind: "mean_welch", mean1: 5.2, mean2: 4.6, sd1: 1.1, sd2: 0.9, n1: 12, n2: 15` → t `1.5248215`, df `21.166825` (fractional by construction), two-sided p `0.1421069`
+- `kind: "mean_pooled"` on the same data → pooled variance `0.986`, df `25`, t `1.5601529`
+- `kind: "proportion", successes1: 45, n1: 100, successes2: 32, n2: 90` → pooled p `0.40526316`, z `1.3240058`, one-sided p `0.0927506`
+
+Welch is the right default when the variances were not designed to be equal; pick `mean_pooled` only when equal variances are a stated assumption. The Welch df is reported unrounded — rounding it to an integer silently changes the p-value. The proportion kind flags a shaky approximation (smallest expected cell < 5) instead of hiding it.
+
 ## Numerics & precision
 
 - Normal cdf: Abramowitz & Stegun 7.1.26 erf fit, absolute error ≤ 1.5e-7 (far beyond published 4-decimal z-tables).
@@ -82,6 +94,7 @@ Kinds: `mean_z` (n = (z·σ/E)²) and `proportion` (`method: "wald"` default: n 
 - Student-t: regularized incomplete beta (Lentz continued fraction) + Lanczos log-gamma; cross-checked against published t-table values (2.2281, 2.0452, 1.8125, 1.984).
 - Exponential / uniform / geometric: closed forms.
 - Hypothesis tests: p-values from the same cdf primitives; critical values via the quantile functions. Wilson sample size: binary search on a half-width that is strictly decreasing in n.
+- Two-sample tests: the Welch–Satterthwaite df is used as-is (fractional), never rounded; the pooled kind reports its pooled variance so the assumption is checkable.
 - All validation errors return `valid: false` with an explanatory `error` string; no tool ever throws on bad numeric input.
 
 ## Development
@@ -89,7 +102,7 @@ Kinds: `mean_z` (n = (z·σ/E)²) and `proportion` (`method: "wald"` default: n 
 ```bash
 pnpm install
 pnpm build
-pnpm test   # 50 tests; anchors from test/oracle/anchors.py (independent Python oracle)
+pnpm test   # 59 tests; anchors from test/oracle/anchors.py (independent Python oracle)
 pnpm lint
 ```
 

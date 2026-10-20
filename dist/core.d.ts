@@ -171,4 +171,53 @@ export interface SampleSizeArgs {
  * smallest n, solved by binary search on the Wilson half-width).
  */
 export declare function sampleSize(args: SampleSizeArgs): SampleSizeResult;
+export type TwoSampleKind = 'mean_z' | 'mean_welch' | 'mean_pooled' | 'proportion';
+export interface TwoSampleResult {
+    valid: boolean;
+    kind?: string;
+    tail?: string;
+    estimate1?: number;
+    estimate2?: number;
+    difference?: number;
+    delta0?: number;
+    standardError?: number;
+    statistic?: number;
+    df?: number;
+    pValue?: number;
+    pValueTwoSided?: number;
+    pValueLeft?: number;
+    pValueRight?: number;
+    criticalValue?: number;
+    alpha?: number;
+    pooledProportion?: number;
+    pooledVariance?: number;
+    reject?: boolean;
+    note?: string;
+    error?: string;
+}
+export interface TwoSampleArgs {
+    kind: string;
+    tail?: string;
+    alpha?: number;
+    delta0?: number;
+    mean1?: number;
+    mean2?: number;
+    sigma1?: number;
+    sigma2?: number;
+    sd1?: number;
+    sd2?: number;
+    n1?: number;
+    n2?: number;
+    successes1?: number;
+    successes2?: number;
+}
+/**
+ * Two-sample hypothesis tests: difference of means with known sigmas (z),
+ * with unknown sigmas under Welch (unequal variances) or pooled (equal
+ * variances) assumptions, and a difference of two proportions (pooled normal
+ * approximation). Reports both group estimates, the difference, the standard
+ * error, the statistic, the Welch–Satterthwaite / pooled df, all three
+ * p-values, the tail-specific critical value and the alpha decision.
+ */
+export declare function twoSampleTest(args: TwoSampleArgs): TwoSampleResult;
 //# sourceMappingURL=core.d.ts.map
